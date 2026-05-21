@@ -68,48 +68,62 @@ def build_messages(user_text: str) -> list[dict]:
     return msgs
 
 
-def call_api(client: OpenAI, messages: list[dict]) -> str:
+def stream_api(client: OpenAI, messages: list[dict]) -> str:
     for attempt in range(1, RETRIES + 1):
         try:
-            r = client.chat.completions.create(
+            stream = client.chat.completions.create(
                 model=DEEPSEEK_MODEL,
                 messages=messages,
                 temperature=0.3,
+                stream=True,
             )
-            return r.choices[0].message.content.strip()
+            parts: list[str] = []
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    print(delta, end="", flush=True)
+                    parts.append(delta)
+            return "".join(parts).strip()
         except Exception as e:
             logging.warning("API attempt %s failed: %s", attempt, e)
             if attempt < RETRIES:
                 time.sleep(attempt)
+    print(FALLBACK, end="", flush=True)
     return FALLBACK
 
 
-def answer(client: OpenAI | None, question: str) -> str:
+def answer(client: OpenAI | None, question: str) -> None:
     key = question.strip().lower()
     stats["total"] += 1
 
     if key in cache:
         stats["hits"] += 1
         logging.info("CACHE HIT: %s", question[:50])
-        return cache[key]
+        print(f"\nБот: {cache[key]}")
+        return
 
     stats["misses"] += 1
     category = classify(question)
     logging.info("category=%s q=%s", category, question[:80])
 
+    print("\nБот: ", end="", flush=True)
     if category == "жалоба":
         reply = ESCALATION
+        print(reply)
     elif client is None:
         reply = FALLBACK
+        print(reply)
     else:
-        reply = call_api(client, build_messages(question))
+        reply = stream_api(client, build_messages(question))
         if category == "тех. проблема" and "специалист" not in reply.lower():
-            reply += f"\n\n{ESCALATION}"
+            extra = f"\n\n{ESCALATION}"
+            print(extra, end="", flush=True)
+            reply += extra
+        print()
 
     cache[key] = reply
     history.append(("user", question))
     history.append(("assistant", reply))
-    return reply
 
 
 def show_stats():
@@ -169,7 +183,7 @@ def main():
             show_stats()
             continue
 
-        print(f"\nБот: {answer(client, text)}")
+        answer(client, text)
 
 
 if __name__ == "__main__":
