@@ -9,6 +9,8 @@ from pathlib import Path
 
 from openai import OpenAI
 
+from vision_support import VisionError, analyze_image, make_vision_client
+
 DEEPSEEK_BASE = "https://api.deepseek.com"
 DEEPSEEK_MODEL = "deepseek-chat"
 
@@ -155,13 +157,41 @@ def make_client() -> OpenAI | None:
     return OpenAI(api_key=api_key, base_url=DEEPSEEK_BASE)
 
 
+def handle_image(args: str) -> None:
+    if not args:
+        print("Использование: /image <путь> [вопрос]")
+        return
+    parts = args.split(maxsplit=1)
+    image_path = parts[0]
+    question = (
+        parts[1]
+        if len(parts) > 1
+        else "Опиши изображение и дай рекомендации по CloudBox, если уместно."
+    )
+    try:
+        vision_client = make_vision_client()
+    except VisionError as e:
+        print(f"Ошибка: {e}")
+        return
+    print("\nБот (vision): ", end="", flush=True)
+    try:
+        reply = analyze_image(vision_client, image_path, question)
+        print(reply)
+        history.append(("user", f"[изображение] {image_path}: {question}"))
+        history.append(("assistant", reply))
+    except VisionError as e:
+        print(f"\nОшибка: {e}")
+
+
 def main():
     load_env()
     client = make_client()
     if not client:
         print("DEEPSEEK_API_KEY не задан — кеш/эскалация, API: fallback.")
 
-    print("CloudBox — техподдержка. Команды: /clear /stats /quit")
+    print(
+        "CloudBox — техподдержка. Команды: /clear /stats /image <путь> [вопрос] /quit"
+    )
     while True:
         try:
             text = input("\nВы: ").strip()
@@ -181,6 +211,9 @@ def main():
             continue
         if cmd == "/stats":
             show_stats()
+            continue
+        if cmd.startswith("/image "):
+            handle_image(text[7:].strip())
             continue
 
         answer(client, text)
